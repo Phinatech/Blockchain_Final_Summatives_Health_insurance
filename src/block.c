@@ -51,12 +51,15 @@ void block_free(Block *b) {
 }
 
 int block_compute_hash(Block *b) {
-    /* Hash the six canonical header fields */
+    /* Hash all eight canonical header fields (spec Section 1.i).
+     * Including miner_id and difficulty ensures tampering with either
+     * is detected by blockchain_verify.                              */
     uint8_t buf[1024]; uint8_t hash[32];
     int n = snprintf((char *)buf, sizeof(buf),
-        "%u|%lld|%u|%s|%s|%llu",
+        "%u|%lld|%u|%s|%s|%llu|%s|%u",
         b->block_id, (long long)b->timestamp, b->transaction_count,
-        b->previous_hash, b->merkle_root, (unsigned long long)b->nonce);
+        b->previous_hash, b->merkle_root, (unsigned long long)b->nonce,
+        b->miner_id, b->difficulty);
     if (n <= 0) return -1;
     sha256_bytes(buf, (size_t)n, hash);
     bytes_to_hex(hash, 32, b->block_hash);

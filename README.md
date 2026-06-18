@@ -1,7 +1,6 @@
-
 # ALU Blockchain-Based Health Insurance Management System
 
-**Course:** Introduction to Blockchain — Final Summative  
+**Course:** Operating Systems and Cryptography — Final Summative  
 **Language:** C (C11) | **Compiler:** GCC 13.3.0 | **Crypto:** OpenSSL 3.0 EVP  
 **Environment:** WSL2 Ubuntu 24.04
 
@@ -57,8 +56,8 @@ openssl version      # needs 3.x
 ## Build
 
 ```bash
-git clone git@github.com:Phinatech/Blockchain_Final_Summatives_Health_insurance.git
-cd Blockchain_Final_Summatives_Health_insurance
+git clone https://github.com/Phinatech/<repo-name>.git
+cd <repo-name>
 make
 ```
 

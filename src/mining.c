@@ -78,9 +78,33 @@ static void apply_confirmed_tx(Blockchain *bc, const Transaction *tx) {
              * 3. If UTXOs consumed exceed the settlement amount, create a
              *    change output back to the pool wallet.
              *
-             * The Account model credit is also applied for the balance ledger.
+             * Account model: debit the sending pool, credit the provider.
+             * For reinsurance pool payments, reinsurance_disburse() is called
+             * HERE at confirmation — not at mempool-queue time — so the pool
+             * balance only changes when the block is actually confirmed.
              */
-            account_credit(bc->accounts, tx->receiver_address, tx->amount);
+            /* Reinsurance disbursement at confirmation time.
+             * Use a local variable for the actual amount paid — never
+             * modify tx->amount after the Merkle root has been computed,
+             * as that would break blockchain_verify.                    */
+            { double settle_amount = tx->amount;
+            if (strncmp(tx->sender_address, ADDR_REINSURANCE_POOL,
+                        ADDR_SIZE) == 0) {
+                double actual = reinsurance_disburse(&bc->reinsurance,
+                                                      tx->amount);
+                if (actual < tx->amount) {
+                    char _note[DESC_SIZE];
+                    snprintf(_note, DESC_SIZE,
+                             "Reinsurance shortfall: needed %.2f AHT, paid %.2f AHT",
+                             tx->amount, actual);
+                    printf("WARNING: %s\n", _note);
+                    fraud_log_add(&bc->fraud_log, tx,
+                                  FRAUD_PARTIAL_REINSURANCE, _note);
+                }
+                settle_amount = actual;   /* pay only what pool had */
+            }
+            account_debit (bc->accounts, tx->sender_address,   settle_amount);
+            account_credit(bc->accounts, tx->receiver_address, settle_amount);
             {
                 double remaining = tx->amount;
                 double consumed  = 0.0;
@@ -109,6 +133,7 @@ static void apply_confirmed_tx(Blockchain *bc, const Transaction *tx) {
                                 change, tx->transaction_id, out_idx);
                 }
             }
+            } /* end settle_amount block */
             break;
         case TX_MINING_REWARD:
             /* Miner credit already applied before PoW; create UTXO output */
@@ -135,6 +160,24 @@ uint64_t mining_pow(Block *block, uint32_t difficulty) {
     printf("[mining] PoW solved   nonce=%llu  hash=%.16s...\n",
            (unsigned long long)block->nonce, block->block_hash);
     return block->nonce;
+}
+
+/*
+ * utxo_sender_has_funds — double-spend guard (spec Section 7.viii).
+ * Returns 1 if the sender has enough unspent UTXOs to cover the amount,
+ * 0 if they do not (would be a double-spend or overspend attempt).
+ * System wallets (pool, coinbase) are exempt — their UTXOs are managed
+ * by apply_confirmed_tx directly.
+ */
+static int utxo_sender_has_funds(UTXO *utxo_set,
+                                  const char *addr, double amount) {
+    double total = 0.0;
+    for (UTXO *u = utxo_set; u; u = u->next) {
+        if (!u->spent &&
+            strncmp(u->owner_address, addr, ADDR_SIZE) == 0)
+            total += u->amount;
+    }
+    return (total >= amount - 0.0001);  /* small epsilon for float comparison */
 }
 
 Block *mine_solo(Blockchain *bc, const char *miner_id,
@@ -176,6 +219,31 @@ Block *mine_solo(Blockchain *bc, const char *miner_id,
                            bc->accounts, tx->sender_address),
                        (unsigned long long)tx->sender_nonce);
                 continue;
+            }
+            /* spec 7.viii: double-spend guard — sender must have enough
+             * unspent UTXOs to cover the transaction amount.           */
+            if (tx->amount > 0.0 &&
+                tx->transaction_type == TX_TOKEN_TRANSFER &&
+                !utxo_sender_has_funds(bc->utxo_set,
+                                        tx->sender_address, tx->amount)) {
+                printf("[mine_solo] skipping tx %.12s...: "
+                       "insufficient unspent UTXOs (double-spend attempt)\n",
+                       tx->transaction_id);
+                continue;
+            }
+            /* spec 7.ii: verify ECDSA signature before including in block.
+             * Transactions with invalid or missing signatures are rejected. */
+            {
+                char pubkey_pem[PEM_SIZE];
+                if (chain_lookup_pubkey(bc, tx->sender_address,
+                                         pubkey_pem) == 0) {
+                    if (tx_verify(tx, pubkey_pem) != 1) {
+                        printf("[mine_solo] skipping tx %.12s...: "
+                               "invalid ECDSA signature\n",
+                               tx->transaction_id);
+                        continue;
+                    }
+                }
             }
         }
         block_add_transaction(b, tx_clone(tx));
@@ -273,6 +341,29 @@ Block *mine_pool_run(Blockchain *bc, PoolSession *s) {
                 printf("[mine_pool] skipping tx %.12s...: invalid nonce\n",
                        tx->transaction_id);
                 continue;
+            }
+            /* spec 7.viii: double-spend guard */
+            if (tx->amount > 0.0 &&
+                tx->transaction_type == TX_TOKEN_TRANSFER &&
+                !utxo_sender_has_funds(bc->utxo_set,
+                                        tx->sender_address, tx->amount)) {
+                printf("[mine_pool] skipping tx %.12s...: "
+                       "insufficient unspent UTXOs\n",
+                       tx->transaction_id);
+                continue;
+            }
+            /* spec 7.ii: verify ECDSA signature before block inclusion */
+            {
+                char pubkey_pem[PEM_SIZE];
+                if (chain_lookup_pubkey(bc, tx->sender_address,
+                                         pubkey_pem) == 0) {
+                    if (tx_verify(tx, pubkey_pem) != 1) {
+                        printf("[mine_pool] skipping tx %.12s...: "
+                               "invalid ECDSA signature\n",
+                               tx->transaction_id);
+                        continue;
+                    }
+                }
             }
         }
         block_add_transaction(b, tx_clone(tx));

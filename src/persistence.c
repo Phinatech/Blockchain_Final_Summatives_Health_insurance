@@ -1,4 +1,6 @@
 #include "persistence.h"
+#include "fraud.h"
+#include "insurance.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -69,6 +71,20 @@ int chain_save_to(const Blockchain *bc, const char *path) {
     fwrite(&cnt, sizeof(uint32_t), 1, f);
     for (UTXO *u = bc->utxo_set; u; u = u->next)
         fwrite(u, sizeof(UTXO) - sizeof(UTXO *), 1, f);
+
+    /* Preauths */
+    cnt = 0;
+    for (Preauth *p = bc->preauths; p; p = p->next) cnt++;
+    fwrite(&cnt, sizeof(uint32_t), 1, f);
+    for (Preauth *p = bc->preauths; p; p = p->next)
+        fwrite(p, sizeof(Preauth) - sizeof(Preauth *), 1, f);
+
+    /* Fraud log */
+    cnt = 0;
+    for (FraudLogEntry *e = bc->fraud_log; e; e = e->next) cnt++;
+    fwrite(&cnt, sizeof(uint32_t), 1, f);
+    for (FraudLogEntry *e = bc->fraud_log; e; e = e->next)
+        fwrite(e, sizeof(FraudLogEntry) - sizeof(FraudLogEntry *), 1, f);
 
     /* Blocks */
     cnt = bc->state.height;
@@ -162,6 +178,22 @@ Blockchain *chain_load(const char *path) {
         UTXO *u = calloc(1, sizeof(UTXO));
         fread(u, sizeof(UTXO) - sizeof(UTXO *), 1, f);
         u->next = bc->utxo_set; bc->utxo_set = u;
+    }
+
+    /* Preauths */
+    fread(&cnt, sizeof(uint32_t), 1, f);
+    for (uint32_t i = 0; i < cnt; i++) {
+        Preauth *p = calloc(1, sizeof(Preauth));
+        fread(p, sizeof(Preauth) - sizeof(Preauth *), 1, f);
+        p->next = bc->preauths; bc->preauths = p;
+    }
+
+    /* Fraud log */
+    fread(&cnt, sizeof(uint32_t), 1, f);
+    for (uint32_t i = 0; i < cnt; i++) {
+        FraudLogEntry *e = calloc(1, sizeof(FraudLogEntry));
+        fread(e, sizeof(FraudLogEntry) - sizeof(FraudLogEntry *), 1, f);
+        e->next = bc->fraud_log; bc->fraud_log = e;
     }
 
     /* Blocks */

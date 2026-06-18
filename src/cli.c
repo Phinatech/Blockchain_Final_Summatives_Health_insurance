@@ -518,30 +518,15 @@ int cmd_settle_claim(Blockchain *bc, char **args, int argc) {
         t1->sender_nonce = account_get_next_nonce(bc->accounts, ADDR_INSURANCE_POOL);
         tx_generate_id(t1);
         mempool_add(&bc->mempool, t1, 2.0);
-        /* Reinsurance pays excess if any */
+        /* Reinsurance pays excess if any.
+         * Queue with the full requested amount — actual disbursement and
+         * shortfall detection happen in apply_confirmed_tx() at block
+         * confirmation, NOT here. Ledger changes must only occur on confirm. */
         if (rein_pay > 0.0) {
-            double actual = reinsurance_disburse(&bc->reinsurance, rein_pay);
-            if (actual < rein_pay) {
-                /* spec 3.iii: partial coverage must be flagged for manual review */
-                char _note[DESC_SIZE];
-                snprintf(_note, DESC_SIZE,
-                         "Reinsurance shortfall: needed %.2f AHT, paid %.2f AHT for claim %s",
-                         rein_pay, actual, c->claim_id);
-                printf("WARNING: %s\n", _note);
-                /* Create a placeholder tx for the log entry */
-                Transaction *_log_tx = tx_create(TX_CLAIM_SETTLE,
-                                                  ADDR_REINSURANCE_POOL,
-                                                  p->keys.wallet_address, actual);
-                strncpy(_log_tx->payload.claim_settle.claim_id,
-                        c->claim_id, ID_SIZE - 1);
-                tx_generate_id(_log_tx);
-                fraud_log_add(&bc->fraud_log, _log_tx,
-                              FRAUD_PARTIAL_REINSURANCE, _note);
-                tx_free(_log_tx);
-            }
             Transaction *t2 = tx_create(TX_CLAIM_SETTLE, ADDR_REINSURANCE_POOL,
-                                         p->keys.wallet_address, actual);
+                                         p->keys.wallet_address, rein_pay);
             t2->sender_nonce = account_get_next_nonce(bc->accounts, ADDR_REINSURANCE_POOL);
+            strncpy(t2->payload.claim_settle.claim_id, c->claim_id, ID_SIZE - 1);
             tx_generate_id(t2);
             mempool_add(&bc->mempool, t2, 2.0);
         }
