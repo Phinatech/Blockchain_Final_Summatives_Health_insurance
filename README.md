@@ -1,7 +1,7 @@
 
 # ALU Blockchain-Based Health Insurance Management System
 
-**Course:** Operating Systems and Cryptography — Final Summative  
+**Course:** Introduction to Blockchain — Final Summative  
 **Language:** C (C11) | **Compiler:** GCC 13.3.0 | **Crypto:** OpenSSL 3.0 EVP  
 **Environment:** WSL2 Ubuntu 24.04
 
